@@ -1,0 +1,183 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_PCD8544.h>
+ 
+const char* ssid     = "Formati-Mendrisio";
+const char* password = "Formati24!";
+ 
+#define PIN_SCLK 18
+#define PIN_DIN  23
+#define PIN_DC   27
+#define PIN_CS   26
+#define PIN_RST  25
+ 
+Adafruit_PCD8544 display(PIN_SCLK, PIN_DIN, PIN_DC, PIN_CS,PIN_RST);
+ 
+unsigned long lastUpdate = 0;
+ 
+void resetDisplay() {
+  display.begin();
+  display.setContrast(57);
+  display.setTextSize(1);
+  display.setTextColor(BLACK);
+}
+ 
+void showText(const char* a, const char* b) {
+  Serial.print("DISPLAY: ");
+  Serial.print(a);
+  Serial.print(" | ");
+  Serial.println(b);
+  resetDisplay();
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print(a);
+  display.setCursor(0, 10);
+  display.print(b);
+  display.display();
+  delay(500);
+}
+ 
+void showTrain(String dep, String arr, String plat, int delayMin) {
+  resetDisplay();
+  display.clearDisplay();
+ 
+  display.fillRect(0, 0, 84, 9, BLACK);
+  display.setTextColor(WHITE);
+  display.setCursor(2, 1);
+  display.print("BELL  >  LUG");
+  display.setTextColor(BLACK);
+ 
+  display.drawLine(0, 10, 84, 10, BLACK);
+ 
+  display.setCursor(0, 13);
+  display.print("Dep  ");
+  display.print(dep);
+  display.setCursor(60, 13);
+  display.print("P");
+  display.print(plat);
+ 
+  display.drawLine(0, 23, 84, 23, BLACK);
+ 
+  
+  display.setCursor(0, 26);
+  display.print("Arr  ");
+  display.print(arr);
+ 
+  display.drawLine(0, 36, 84, 36, BLACK);
+ 
+  
+  display.setCursor(0, 39);
+  if (delayMin <= 3) {
+    display.print(">> ON TIME");
+  } else {
+    display.print(">> DELAY +");
+    display.print(delayMin);
+    display.print("m");
+  }
+ 
+  display.display();
+}
+ 
+void fetchAndShow() {
+  if (WiFi.status() != WL_CONNECTED) {
+    showText("WiFi", "Reconnecting");
+    WiFi.begin(ssid, password);
+    int tries = 0;
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      tries++;
+      if (tries > 20) {
+        showText("WiFi", "FAILED");
+        return;
+      }
+    }
+    showText("WiFi", "OK");
+  }
+ 
+  showText("Loading", "trains...");
+ 
+  HTTPClient http;
+  http.begin("https://transport.opendata.ch/v1/connections?from=Bellinzona&to=Lugano&limit=1");
+  int code = http.GET();
+ 
+  Serial.print("HTTP code: ");
+  Serial.println(code);
+ 
+  if (code != 200) {
+    showText("HTTP ERR", String(code).c_str());
+    http.end();
+    return;
+  }
+ 
+  String payload = http.getString();
+  http.end();
+ 
+  DynamicJsonDocument doc(4096);
+  DeserializationError err = deserializeJson(doc, payload);
+ 
+  if (err) {
+    Serial.print("JSON error: ");
+    Serial.println(err.c_str());
+    showText("JSON ERR", err.c_str());
+    return;
+  }
+ 
+  int delayMin    = doc["connections"][0]["from"]["delay"] | 0;
+  String dep      = doc["connections"][0]["from"]["departure"] | "??:??";
+  String arr      = doc["connections"][0]["to"]["arrival"]     | "??:??";
+  String platform = doc["connections"][0]["from"]["platform"]  | "?";
+ 
+  String depTime = dep.length() >= 16 ? dep.substring(11, 16) : dep;
+  String arrTime = arr.length() >= 16 ? arr.substring(11, 16) : arr;
+ 
+  Serial.println(depTime + " -> " + arrTime + " P" + platform);
+ 
+  showTrain(depTime, arrTime, platform, delayMin);
+}
+ 
+void setup() {
+  Serial.begin(115200);
+  Serial.println("=== BOOT ===");
+ 
+  resetDisplay();
+  showText("Swiss Rail", "Monitor");
+  delay(1000);
+ 
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true);
+  delay(300);
+  WiFi.begin(ssid, password);
+ 
+  showText("WiFi", "Connecting...");
+ 
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    tries++;
+    Serial.print("Try ");
+    Serial.print(tries);
+    Serial.print(" status: ");
+    Serial.println(WiFi.status());
+    if (tries > 30) {
+      showText("WiFi", "FAILED");
+      return;
+    }
+  }
+ 
+  Serial.println("WiFi OK");
+  showText("WiFi", "Connected!");
+  delay(800);
+ 
+  fetchAndShow();
+  lastUpdate = millis();
+}
+ 
+void loop() {
+  
+  if (millis() - lastUpdate > 30000) {
+    lastUpdate = millis();
+    fetchAndShow();
+  }
+}
