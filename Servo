@@ -1,0 +1,12 @@
+#include <Servo.h>
+
+Servo servo;
+int angle = 90;   // set desired angle (0–180)
+
+void setup() {
+  servo.attach(9);
+  servo.write(angle);
+}
+
+void loop() {
+}
