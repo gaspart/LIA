@@ -1,0 +1,46 @@
+# MicroPython: HC-SR04 + 2 LEDs
+# Adjust pin numbers to your wiring
+
+from machine import Pin, time_pulse_us
+import time
+
+# Pins
+trig = Pin(3, Pin.OUT)
+echo = Pin(2, Pin.IN)
+
+led_near = Pin(8, Pin.OUT)   # turns ON when object is close
+led_far  = Pin(9, Pin.OUT)   # turns ON when object is far
+
+def get_distance_cm():
+    # Trigger pulse
+    trig.value(0)
+    time.sleep_us(2)
+    trig.value(1)
+    time.sleep_us(10)
+    trig.value(0)
+
+    # Measure echo pulse width
+    duration = time_pulse_us(echo, 1, 30000)  # timeout 30 ms
+
+    if duration < 0:
+        return None
+
+    # Convert to cm
+    distance = (duration / 2) / 29.1
+    return distance
+
+while True:
+    d = get_distance_cm()
+
+    if d is not None:
+        if d < 20:          # threshold in cm
+            led_near.on()
+            led_far.off()
+        else:
+            led_near.off()
+            led_far.on()
+    else:
+        led_near.off()
+        led_far.off()
+
+    time.sleep(0.1)
