@@ -1,0 +1,102 @@
+// Nuovo progetto: monitor traffico ferroviario Mendrisio - Chiasso
+ 
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+ 
+const char* ssid = "Formati-Mendrisio";
+const char* password = "Formati24!";
+ 
+const int LED_GREEN = 18;
+const int LED_RED = 19;
+ 
+const char* url =
+"https://transport.opendata.ch/v1/connections?from=Mendrisio&to=Chiasso";
+ 
+void setup() {
+  Serial.begin(115200);
+ 
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_RED, OUTPUT);
+ 
+  digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_RED, HIGH);
+ 
+  WiFi.begin(ssid, password);
+ 
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+ 
+  Serial.println("\nWiFi connected");
+}
+ 
+void loop() {
+  checkConnectionStatus();
+  delay(300000);
+}
+ 
+void checkConnectionStatus() {
+  if (WiFi.status() != WL_CONNECTED) {
+    red();
+    return;
+  }
+ 
+  HTTPClient http;
+  http.begin(url);
+ 
+  int httpCode = http.GET();
+ 
+  if (httpCode != 200) {
+    Serial.println("API error");
+    red();
+    http.end();
+    return;
+  }
+ 
+  String payload = http.getString();
+  http.end();
+ 
+  StaticJsonDocument<16384> doc;
+  DeserializationError error = deserializeJson(doc, payload);
+ 
+  if (error) {
+    Serial.println("JSON error");
+    red();
+    return;
+  }
+ 
+  JsonObject conn = doc["connections"][0];
+ 
+  const char* departure = conn["from"]["departure"];
+  const char* delay = conn["from"]["delay"];
+ 
+  Serial.print("Departure: ");
+  Serial.println(departure);
+ 
+  int delayMinutes = 0;
+ 
+  if (!conn["from"]["delay"].isNull()) {
+    delayMinutes = conn["from"]["delay"].as<int>();
+  }
+ 
+  Serial.print("Delay minutes: ");
+  Serial.println(delayMinutes);
+ 
+  if (delayMinutes <= 3) {
+    green();
+  } else {
+    red();
+  }
+}
+ 
+void green() {
+  digitalWrite(LED_GREEN, HIGH);
+  digitalWrite(LED_RED, LOW);
+}
+ 
+void red() {
+  digitalWrite(LED_GREEN, LOW);
+  digitalWrite(LED_RED, HIGH);
+}
