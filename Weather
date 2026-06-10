@@ -1,0 +1,146 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DHT.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+
+#define DHTPIN 27
+#define DHTTYPE DHT11
+
+const char* ssid = "Formati-Mendrisio";
+const char* password = "Formati24!";
+
+DHT dht(DHTPIN, DHTTYPE);
+WebServer server(80);
+
+String weatherTemp = "--";
+String weatherWind = "--";
+
+// ===== WEATHER (MENDRISIO) =====
+void updateWeather() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClientSecure client;
+  client.setInsecure(); // skip certificate validation (simplest for classroom)
+
+  HTTPClient https;
+
+  String url = "https://api.open-meteo.com/v1/forecast"
+               "?latitude=45.87"
+               "&longitude=8.98"
+               "&current=temperature_2m,wind_speed_10m"
+               "&timezone=Europe%2FZurich";
+
+  https.begin(client, url);
+  int httpCode = https.GET();
+
+  if (httpCode == 200) {
+    String payload = https.getString();
+
+    StaticJsonDocument<1024> doc;
+    DeserializationError error = deserializeJson(doc, payload);
+
+    if (!error) {
+      weatherTemp = String(doc["current"]["temperature_2m"].as<float>(), 1);
+      weatherWind = String(doc["current"]["wind_speed_10m"].as<float>(), 1);
+    }
+  }
+
+  https.end();
+}
+
+// ===== WEB PAGE =====
+void handleRoot() {
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<meta http-equiv='refresh' content='5'>";
+  html += "<title>ESP32 Dashboard</title>";
+  html += "<style>";
+  html += "body{font-family:Arial;text-align:center;background:#f4f4f4;margin-top:50px;}";
+  html += ".card{background:white;padding:25px;margin:auto;width:320px;border-radius:12px;box-shadow:0 0 10px #ccc;}";
+  html += "h1{color:#333;} .value{font-size:30px;font-weight:bold;color:#0078D4;}";
+  html += "hr{margin:20px 0;}";
+  html += "</style></head><body>";
+
+  html += "<div class='card'>";
+  html += "<h1>ESP32 Dashboard</h1>";
+
+  if (isnan(t) || isnan(h)) {
+    html += "<p>Errore lettura sensore</p>";
+  } else {
+    html += "<p>Temperatura interna</p>";
+    html += "<div class='value'>" + String(t, 1) + " &deg;C</div>";
+    html += "<p>Umidit&agrave;</p>";
+    html += "<div class='value'>" + String(h, 1) + " %</div>";
+  }
+
+  html += "<hr>";
+  html += "<h2>Meteo Mendrisio</h2>";
+  html += "<p>Temperatura esterna</p>";
+  html += "<div class='value'>" + weatherTemp + " &deg;C</div>";
+  html += "<p>Vento</p>";
+  html += "<div class='value'>" + weatherWind + " km/h</div>";
+
+  html += "<p>Aggiornamento automatico ogni 5 secondi</p>";
+  html += "</div></body></html>";
+
+  server.send(200, "text/html", html);
+}
+
+// ===== JSON ENDPOINT =====
+void handleJson() {
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  String json = "{";
+  json += "\"temperatura_interna\":" + String(t, 1) + ",";
+  json += "\"umidita\":" + String(h, 1) + ",";
+  json += "\"temperatura_esterna\":" + weatherTemp + ",";
+  json += "\"vento\":" + weatherWind;
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+// ===== SETUP =====
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+
+  WiFi.begin(ssid, password);
+  Serial.print("Connessione WiFi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.print("Connesso. IP: ");
+  Serial.println(WiFi.localIP());
+
+  updateWeather(); // first fetch
+
+  server.on("/", handleRoot);
+  server.on("/json", handleJson);
+
+  server.begin();
+  Serial.println("Web server avviato");
+}
+
+// ===== LOOP =====
+void loop() {
+  server.handleClient();
+
+  static unsigned long lastWeatherUpdate = 0;
+
+  if (millis() - lastWeatherUpdate > 600000) { // 10 min
+    updateWeather();
+    lastWeatherUpdate = millis();
+  }
+}
